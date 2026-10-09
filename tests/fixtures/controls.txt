@@ -1,0 +1,26 @@
+User Controls
+
+                     brightness 0x00980900 (int)    : min=-64 max=64 step=1 default=0 value=12
+                       contrast 0x00980901 (int)    : min=0 max=100 step=1 default=50 value=40
+        white_balance_automatic 0x0098090c (bool)   : default=1 value=1
+      white_balance_temperature 0x0098091a (int)    : min=2800 max=6500 step=1 default=4600 value=4600 flags=inactive
+                      sharpness 0x0098091b (int)    : min=0 max=6 step=1 default=3 value=3 flags=read-only
+             power_line_frequency 0x00980918 (menu) : min=0 max=2 default=1 value=1
+				0: Disabled
+				1: 50 Hz
+				2: 60 Hz
+
+Camera Controls
+
+                  auto_exposure 0x009a0901 (menu)   : min=1 max=3 default=3 value=3
+				1: Manual Mode
+				3: Aperture Priority Mode
+         exposure_time_absolute 0x009a0902 (int)    : min=3 max=2047 step=1 default=250 value=250 flags=inactive
+                 focus_absolute 0x009a090a (int)    : min=0 max=255 step=5 default=0 value=0 flags=grabbed
+                 focus_automatic 0x009a090c (bool)   : default=1 value=1
+                  zoom_absolute 0x009a090d (int)    : min=100 max=400 step=5 default=100 value=100
+                    pan_absolute 0x009a0908 (int)   : min=-36000 max=36000 step=3600 default=0 value=0
+                     trigger_now 0x08000001 (button): flags=write-only
+                     frame_ticks 0x08000002 (int64) : min=0 max=9223372036854775807 step=1 default=0 value=9223372036854775806
+                     device_name 0x08000003 (string): min=0 max=64 step=1 value="Office camera" flags=has-payload
+                    sensor_table 0x08000004 (u8)    : min=0 max=255 step=1 dims=[256] flags=has-payload

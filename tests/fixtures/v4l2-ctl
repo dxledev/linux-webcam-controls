@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fixture_directory="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)"
+if [[ -n "${WEBCAM_CONTROLS_TEST_LOG:-}" ]]; then
+    printf '%s\n' "$*" >> "$WEBCAM_CONTROLS_TEST_LOG"
+fi
+
+if [[ "$*" == --list-devices ]]; then
+    printf 'USB Camera (usb-0000:01):\n\t/dev/video0\n\t/dev/video1\n\nSecond Camera (usb-0000:02):\n\t/dev/video2\n'
+elif [[ "${2:-}" == --info && "${1:-}" == --device=/dev/video1 ]]; then
+    printf 'Driver Info:\n\tCard type : USB Camera Metadata\n\tCapabilities : 0x84a00001\n\t\tVideo Capture\n\t\tMetadata Capture\n\tDevice Caps : 0x04a00000\n\t\tMetadata Capture\n\t\tStreaming\n'
+elif [[ "${2:-}" == --info ]]; then
+    printf 'Driver Info:\n\tCard type : USB Camera\n\tBus info : usb-0000:01\n\tCapabilities : 0x84a00001\n\t\tVideo Capture\n\tDevice Caps : 0x04200001\n\t\tVideo Capture\n\t\tStreaming\n'
+elif [[ "${2:-}" == --list-ctrls-menus ]]; then
+    if [[ "${WEBCAM_CONTROLS_TEST_EMPTY:-0}" != 1 ]]; then
+        /usr/bin/cat "$fixture_directory/controls.txt"
+    fi
+elif [[ "${2:-}" == --set-ctrl=* ]]; then
+    if [[ "$2" == --set-ctrl=contrast=99 ]]; then
+        printf 'Device rejected value\n' >&2
+        exit 1
+    fi
+else
+    printf 'Unexpected fixture command\n' >&2
+    exit 2
+fi

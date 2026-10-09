@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Webcam Controls
+Comment=Preview and control your V4L2 camera
+Exec=webcam-controls
+Icon=io.github.webcam_controls
+Terminal=false
+Categories=AudioVideo;Video;
+Keywords=camera;webcam;video;v4l2;exposure;focus;
+StartupNotify=true
+StartupWMClass=io.github.webcam_controls
