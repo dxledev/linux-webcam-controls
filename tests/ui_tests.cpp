@@ -2,6 +2,7 @@
 #include "core/theme_source.h"
 #include "ui/control_row.h"
 #include "ui/modal.h"
+#include "ui/modal_motion.h"
 #include "ui/theme_watcher.h"
 #include "ui/window.h"
 
@@ -16,6 +17,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
+#include <algorithm>
 #include <cstdio>
 
 using namespace webcam;
@@ -173,6 +175,57 @@ private slots:
         QCOMPARE(loadTheme(output).hex("accent"), "#c0ffee");
     }
 
+    void modalAnimatesWithoutFlashing() {
+        QTemporaryDir temporary;
+        WindowOptions options;
+        options.configDirectory = temporary.path();
+        options.executable = fixtureTool();
+        options.preview = false;
+        Window window(options, presetTheme("slate"));
+        window.resize(980, 700);
+        window.show();
+        auto *picker = window.findChild<QPushButton *>("deviceButton");
+        QTRY_VERIFY(picker->isEnabled());
+        auto *modal = window.findChild<Modal *>();
+        const auto before = window.centralWidget()->grab().toImage().convertToFormat(QImage::Format_RGB32);
+        picker->click();
+        QVERIFY(modal->isVisible());
+        // The first painted frame must still show the untouched window, never an empty overlay.
+        const auto opening = modal->grab().toImage().convertToFormat(QImage::Format_RGB32);
+        QCOMPARE(opening.size(), before.size());
+        int differing = 0, maxDelta = 0;
+        for (int y = 0; y < before.height(); ++y)
+            for (int x = 0; x < before.width(); ++x) {
+                const auto a = opening.pixel(x, y), b = before.pixel(x, y);
+                if (a == b)
+                    continue;
+                ++differing;
+                maxDelta = std::max({maxDelta, qAbs(qRed(a) - qRed(b)), qAbs(qGreen(a) - qGreen(b)), qAbs(qBlue(a) - qBlue(b))});
+            }
+        // Compositing over the window colour may round antialiased edges by a level or two.
+        QVERIFY2(maxDelta <= 3, qPrintable(QString("%1 pixels differ, max delta %2").arg(differing).arg(maxDelta)));
+        auto *card = modal->findChild<QFrame *>("modalCard");
+        QVERIFY(card->graphicsEffect());
+        QTest::qWait(ModalMotion::duration + 80);
+        QVERIFY(modal->isVisible() && !modal->closing());
+        window.resize(900, 640);
+        QTest::qWait(60);
+        modal->dismiss();
+        QVERIFY(modal->closing());
+        QVERIFY(window.modalVisible());
+        for (int frame = 0; frame < 4; ++frame) {
+            QTest::qWait(ModalMotion::duration / 5);
+            if (!modal->isVisible())
+                break;
+            const auto image = modal->grab().toImage().convertToFormat(QImage::Format_ARGB32);
+            for (int y = 0; y < image.height(); y += 7)
+                for (int x = 0; x < image.width(); x += 7)
+                    QCOMPARE(qAlpha(image.pixel(x, y)), 255);
+        }
+        QTRY_VERIFY(!window.modalVisible());
+        QTRY_VERIFY(picker->isEnabled());
+    }
+
     void windowAndEmbeddedMenus() {
         QTemporaryDir temporary;
         auto theme = presetTheme("slate");
@@ -205,7 +258,10 @@ private slots:
         QVERIFY(window.modalVisible());
         screenshot(window, "light-modal");
         QTest::keyClick(modal, Qt::Key_Escape);
-        QVERIFY(!window.modalVisible());
+        QVERIFY(modal->closing());
+        QVERIFY(window.modalVisible());
+        QTRY_VERIFY(!window.modalVisible());
+        QTRY_VERIFY(picker->isEnabled());
         QTest::mouseClick(picker, Qt::LeftButton);
         QVERIFY(window.modalVisible());
         for (int index = 0; index < 6; ++index) {
@@ -213,6 +269,7 @@ private slots:
             QVERIFY(modal->isAncestorOf(QApplication::focusWidget()));
         }
         modal->dismiss();
+        QTRY_VERIFY(!window.modalVisible());
         auto *search = window.findChild<QLineEdit *>("search");
         search->setText("exposure");
         QCOMPARE(window.findChildren<ControlRow *>().size(), 2);
@@ -226,7 +283,7 @@ private slots:
         QTest::mouseClick(menuRow->findChild<QPushButton *>("choiceButton"), Qt::LeftButton);
         QVERIFY(window.modalVisible());
         QTest::mouseClick(modal, Qt::LeftButton, Qt::NoModifier, QPoint(4, 4));
-        QVERIFY(!window.modalVisible());
+        QTRY_VERIFY(!window.modalVisible());
         int visibleWindows = 0;
         for (auto *top : QApplication::topLevelWidgets())
             if (top->isVisible())

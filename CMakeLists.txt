@@ -21,6 +21,7 @@ add_library(webcam_ui
     src/ui/theme_watcher.cpp
     src/ui/icons.cpp
     src/ui/modal.cpp
+    src/ui/modal_motion.cpp
     src/ui/preview.cpp
     src/ui/control_row.cpp
     src/ui/window.cpp

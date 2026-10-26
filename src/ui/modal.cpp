@@ -1,5 +1,6 @@
 #include "modal.h"
 #include "icons.h"
+#include "modal_motion.h"
 
 #include <QApplication>
 #include <QFrame>
@@ -34,7 +35,16 @@ QPixmap extendEdges(const QPixmap &snapshot, int padding) {
 Modal::Modal(QWidget *parent, QWidget *background) : QWidget(parent), background_(background), card_(new QFrame(this)) {
     setObjectName("modalOverlay");
     setFocusPolicy(Qt::StrongFocus);
+    // The overlay paints every pixel itself so nothing uncovered shows between frames.
+    setAttribute(Qt::WA_NoSystemBackground);
     card_->setObjectName("modalCard");
+    motion_ = new ModalMotion(card_);
+    card_->setGraphicsEffect(motion_);
+    connect(motion_, &ModalMotion::progressChanged, this, [this] { update(); });
+    connect(motion_, &ModalMotion::finished, this, [this](bool open) {
+        if (!open && closing_)
+            finishDismiss();
+    });
     auto *layout = new QVBoxLayout(card_);
     layout->setContentsMargins(24, 24, 24, 24);
     layout->setSpacing(14);
@@ -74,7 +84,28 @@ void Modal::capture() {
     if (background_->size().isEmpty())
         return;
     background_->layout()->activate();
+    if (backgroundFrozen_ && backgroundUpdatesWereEnabled_)
+        background_->setUpdatesEnabled(true);
+    // Re-captures while open must not pick up the greyed-out disabled styling.
+    const bool restyle = backgroundFrozen_ && !background_->isEnabled() && backgroundWasEnabled_;
+    if (restyle)
+        background_->setEnabled(true);
     auto snapshot = background_->grab();
+    if (restyle)
+        background_->setEnabled(false);
+    if (backgroundFrozen_)
+        background_->setUpdatesEnabled(false);
+    // The grabbed widget is transparent where the window background shows through, so lay it
+    // over that opaque colour; the overlay is painted in Source mode and must never be see-through.
+    backgroundFrame_ = QPixmap(snapshot.size());
+    backgroundFrame_.setDevicePixelRatio(snapshot.devicePixelRatio());
+    auto windowColor = tint_;
+    windowColor.setAlpha(255);
+    backgroundFrame_.fill(windowColor);
+    {
+        QPainter framePainter(&backgroundFrame_);
+        framePainter.drawPixmap(QPointF(), snapshot);
+    }
     auto reducedSize = (snapshot.deviceIndependentSize().toSize() / 3).expandedTo(QSize(1, 1));
     if (reducedSize.width() > 640 || reducedSize.height() > 640)
         reducedSize.scale(640, 640, Qt::KeepAspectRatio);
@@ -92,6 +123,8 @@ void Modal::capture() {
     snapshot_.fill(Qt::transparent);
     QPainter painter(&snapshot_);
     scene.render(&painter, QRectF(QPointF(), reduced.size()), QRectF(QPointF(padding, padding), reduced.size()));
+    // The tint is baked in so it fades in together with the blur.
+    painter.fillRect(snapshot_.rect(), tint_);
 }
 
 void Modal::centerCard() {
@@ -113,25 +146,80 @@ void Modal::open(const QString &title, const QString &description, QWidget *body
     title_->setText(title);
     description_->setText(description);
     description_->setVisible(!description.isEmpty());
-    previousFocus_ = QApplication::focusWidget();
+    const bool wasVisible = isVisible();
+    closing_ = false;
+    pendingAction_ = nullptr;
+    card_->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+    if (!wasVisible) {
+        previousFocus_ = QApplication::focusWidget();
+        backgroundWasEnabled_ = background_->isEnabled();
+        backgroundUpdatesWereEnabled_ = background_->updatesEnabled();
+        motion_->reset();
+    }
     setGeometry(parentWidget()->rect());
-    capture();
-    background_->setEnabled(false);
+    centerCard();
+    if (!wasVisible) {
+        // Grab before disabling so the greyed-out restyle never reaches the screen.
+        capture();
+        background_->setEnabled(false);
+        if (!backgroundFrozen_) {
+            background_->setUpdatesEnabled(false);
+            backgroundFrozen_ = true;
+        }
+    }
     show();
     raise();
-    centerCard();
     close_->setFocus(Qt::OtherFocusReason);
+    motion_->animate(true);
 }
 
-void Modal::dismiss() {
-    if (!isVisible())
+void Modal::dismiss() { beginDismiss({}); }
+
+void Modal::beginDismiss(std::function<void()> action) {
+    if (!isVisible() || closing_)
         return;
+    closing_ = true;
+    pendingAction_ = std::move(action);
+    card_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    qApp->installEventFilter(this);
+    motion_->animate(false);
+}
+
+void Modal::finishDismiss() {
+    auto action = std::move(pendingAction_);
+    pendingAction_ = nullptr;
+    closing_ = false;
+    qApp->removeEventFilter(this);
     hide();
-    snapshot_ = {};
-    background_->setEnabled(true);
-    if (previousFocus_)
+    background_->setEnabled(backgroundWasEnabled_);
+    restoreBackgroundUpdates();
+    if (previousFocus_ && previousFocus_->isEnabled() && previousFocus_->isVisible())
         previousFocus_->setFocus(Qt::OtherFocusReason);
+    previousFocus_.clear();
     emit dismissed();
+    if (action)
+        action();
+}
+
+void Modal::restoreBackgroundUpdates() {
+    if (backgroundFrozen_)
+        background_->setUpdatesEnabled(backgroundUpdatesWereEnabled_);
+    backgroundFrozen_ = false;
+}
+
+bool Modal::eventFilter(QObject *object, QEvent *event) {
+    if (closing_ && (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease ||
+                     event->type() == QEvent::ShortcutOverride || event->type() == QEvent::Wheel))
+        return true;
+    return QWidget::eventFilter(object, event);
+}
+
+void Modal::hideEvent(QHideEvent *event) {
+    if (!event->spontaneous()) {
+        snapshot_ = {};
+        backgroundFrame_ = {};
+    }
+    QWidget::hideEvent(event);
 }
 
 void Modal::choices(const QString &title, const QString &description, const QVector<QPair<QString, QString>> &options,
@@ -147,7 +235,7 @@ void Modal::choices(const QString &title, const QString &description, const QVec
         auto *button = new QPushButton(option.second);
         button->setObjectName(option.first == selected ? "selectedChoice" : "choiceButton");
         button->setMinimumHeight(44);
-        connect(button, &QPushButton::clicked, this, [this, choose, value = option.first] { dismiss(); choose(value); });
+        connect(button, &QPushButton::clicked, this, [this, choose, value = option.first] { beginDismiss([choose, value] { choose(value); }); });
         layout->addWidget(button);
     }
     layout->addStretch();
@@ -163,7 +251,7 @@ void Modal::confirm(const QString &title, const QString &description, const QStr
     auto *accept = new QPushButton(action);
     accept->setObjectName("primaryButton");
     connect(cancel, &QPushButton::clicked, this, &Modal::dismiss);
-    connect(accept, &QPushButton::clicked, this, [this, confirm] { dismiss(); confirm(); });
+    connect(accept, &QPushButton::clicked, this, [this, confirm] { beginDismiss(confirm); });
     layout->addStretch();
     layout->addWidget(cancel);
     layout->addWidget(accept);
@@ -172,9 +260,18 @@ void Modal::confirm(const QString &title, const QString &description, const QStr
 
 void Modal::paintEvent(QPaintEvent *) {
     QPainter painter(this);
+    painter.setCompositionMode(QPainter::CompositionMode_Source);
+    if (backgroundFrame_.isNull()) {
+        auto fallback = tint_;
+        fallback.setAlpha(255);
+        painter.fillRect(rect(), fallback);
+    } else {
+        painter.drawPixmap(QPointF(), backgroundFrame_);
+    }
+    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    painter.setOpacity(motion_->progress());
     painter.drawPixmap(rect(), snapshot_);
-    painter.fillRect(rect(), tint_);
 }
 
 void Modal::resizeEvent(QResizeEvent *) {
@@ -184,7 +281,7 @@ void Modal::resizeEvent(QResizeEvent *) {
 }
 
 void Modal::mousePressEvent(QMouseEvent *event) {
-    if (!card_->geometry().contains(event->position().toPoint()))
+    if (!closing_ && !card_->geometry().contains(event->position().toPoint()))
         dismiss();
     event->accept();
 }
