@@ -51,6 +51,50 @@ private slots:
         QCOMPARE(importPalette(temporary.path()).hex("accent"), "#c0ffee");
     }
 
+    void qmlBackgroundFormats_data() {
+        QTest::addColumn<QString>("backgroundExpression");
+        QTest::addColumn<QString>("expectedBackground");
+        QTest::newRow("six-digit-hex") << QStringLiteral("\"#0e1e36\"") << QStringLiteral("#0e1e36");
+        QTest::newRow("akane-argb") << QStringLiteral("\"#e00e1e36\"") << QStringLiteral("#0e1e36");
+        QTest::newRow("transparent-argb") << QStringLiteral("\"#000e1e36\"") << QStringLiteral("#0e1e36");
+        QTest::newRow("opaque-argb") << QStringLiteral("\"#ff0e1e36\"") << QStringLiteral("#0e1e36");
+        QTest::newRow("uppercase-argb") << QStringLiteral("\"#E00E1E36\"") << QStringLiteral("#0e1e36");
+        QTest::newRow("fractional-rgba") << QStringLiteral("Qt.rgba(14 / 255, 30 / 255, 54 / 255, 0.88)") << QStringLiteral("#0e1e36");
+        QTest::newRow("decimal-rgba") << QStringLiteral("Qt.rgba(0.2, 0.4, 0.6, 0.5)") << QStringLiteral("#336699");
+    }
+
+    void qmlBackgroundFormats() {
+        QFETCH(QString, backgroundExpression);
+        QFETCH(QString, expectedBackground);
+        QTemporaryDir temporary;
+        const auto qml = temporary.path() + "/Colors.qml";
+        QFile file(qml);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const auto contents = QString(
+            "pragma Singleton\nimport QtQuick\nSingleton {\n"
+            "readonly property color background: %1\n"
+            "readonly property color backgroundAlt: \"#e01a2a46\"\n"
+            "readonly property color foreground: \"#f4b999\"\n"
+            "readonly property color primary: \"#9279aa\"\n"
+            "}\n").arg(backgroundExpression);
+        file.write(contents.toUtf8());
+        file.close();
+
+        const auto verify = [&](const Theme &theme) {
+            QCOMPARE(theme.color("background"), QColor(expectedBackground));
+            QCOMPARE(theme.color("background").alpha(), 255);
+            QCOMPARE(theme.hex("surface"), QStringLiteral("#1a2a46"));
+            QCOMPARE(theme.hex("accent"), QStringLiteral("#9279aa"));
+        };
+
+        verify(importPalette(qml));
+        verify(importPalette(temporary.path()));
+        const auto followed = followPalette(temporary.path());
+        QCOMPARE(followed.source, temporary.path());
+        verify(parseTheme(followed.toJson()));
+        QCOMPARE(parseTheme(followed.toJson()), followed);
+    }
+
     void controlTypesAndFlags() {
         const auto controls = parseControls(fixture("controls.txt"));
         QCOMPARE(controls.size(), 16);

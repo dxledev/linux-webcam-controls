@@ -81,13 +81,15 @@ Palette qmlColors(const QString &path) {
     auto contents = QString::fromUtf8(file.readAll());
     contents.remove(QRegularExpression("/\\*.*?\\*/", QRegularExpression::DotMatchesEverythingOption));
     contents.remove(QRegularExpression("//[^\\n]*"));
-    static const QRegularExpression property(R"(property\s+color\s+(\w+)\s*:\s*(?:["'](#[a-fA-F0-9]{6})["']|Qt\.rgba\(([^)]+)\)))");
+    static const QRegularExpression property(R"(property\s+color\s+(\w+)\s*:\s*(?:["'](#[a-fA-F0-9]{6}(?:[a-fA-F0-9]{2})?)["']|Qt\.rgba\(([^)]+)\)))");
     Palette palette;
     auto matches = property.globalMatch(contents);
     while (matches.hasNext()) {
         const auto match = matches.next();
         if (!match.captured(2).isEmpty()) {
-            palette.insert(match.captured(1), QColor(match.captured(2)));
+            auto color = QColor(match.captured(2));
+            color.setAlpha(255);
+            palette.insert(match.captured(1), color);
         } else {
             const auto channels = match.captured(3).split(',');
             if (channels.size() != 4)
